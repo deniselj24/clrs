@@ -9,17 +9,12 @@ from typing import Any, Dict, List, Optional
 from absl import app
 from absl import flags
 from absl import logging
-import clrs
-import jax
 import numpy as np
-import requests
-import tensorflow as tf
 import json 
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, TrainingArguments, Trainer, DataCollatorForLanguageModeling
-import torch
 from evaluation import evaluate_text
 import wandb
-from datasets import load_dataset, Dataset, DatasetDict
+from datasets import load_dataset
 
 
 # flags.DEFINE_list('algorithms', ['bfs', 'activity_selector', 'articulation_points', 'bellman_ford', 'binary_search', 'bridges', 'bubble_sort', 'dag_shortest_paths', 'dfs', 'dijkstra', 'find_maximum_subarray_kadane', 'floyd_warshall', 'graham_scan', 'heapsort', 'insertion_sort', 'jarvis_march', 'kmp_matcher', 'lcs_length', 'matrix_chain_order', 'minimum', 'mst_kruskal', 'mst_prim', 'naive_string_matcher', 'optimal_bst', 'quickselect', 'quicksort', 'segments_intersect', 'strongly_connected_components', 'task_scheduling', 'topological_sort'], 'Which algorithms to run.')
@@ -47,8 +42,6 @@ flags.DEFINE_integer('train_steps', 10000, 'Number of training iterations.')
 flags.DEFINE_integer('eval_every', 50, 'Evaluation frequency (in steps).')
 flags.DEFINE_integer('test_every', 500, 'Evaluation frequency (in steps).')
 
-flags.DEFINE_integer('hidden_size', 128,
-                     'Number of hidden units of the model.')
 flags.DEFINE_float('learning_rate', 0.001, 'Learning rate to use.')
 flags.DEFINE_float('grad_clip_max_norm', 1.0,
                    'Gradient clipping by norm. 0.0 disables grad clipping')
@@ -70,7 +63,7 @@ flags.DEFINE_integer('nb_triplet_fts', 8,
 flags.DEFINE_string('checkpoint_path', '/tmp/CLRS30',
                     'Path in which checkpoints are saved.')
 flags.DEFINE_string('dataset_path', './data_with_trace',
-                    'Path in which dataset is stored.')
+                    'Path in which training dataset is stored.')
 flags.DEFINE_boolean('freeze_processor', False,
                      'Whether to freeze the processor of the model.')
 
@@ -83,7 +76,7 @@ class CustomTrainer(Trainer):
       outputs = model(**inputs)
       loss = outputs.loss
     else:
-      # Custom evaluation logic
+      # Custom loss based on string matching where the target is checked to be a substring of the generated text
       generated_ids = model.generate(
         inputs["input_ids"],
         max_length=8192,
@@ -103,22 +96,23 @@ def main(unused_argv):
   # create dataset -- traces were previously called hints in the original CLRS benchmark
   # traces are in contained the target field of the json
   train_file = './training_data/train.json'
-  train_examples = {"inputs": [], "targets": []}
+  train_examples = {"prompt": [], "targets": [], "trace": []}
   for algorithm in FLAGS.algorithms:
     data_path = f"{FLAGS.dataset_path}/train/{algorithm}.json"
     with open(data_path, 'r') as f:
       text_data = json.load(f)
-      train_examples["inputs"].extend([example["prompt"] for example in text_data["examples"]])
+      train_examples["prompt"].extend([example["prompt"] for example in text_data["examples"]])
       train_examples["targets"].extend([example["references"][0] for example in text_data["examples"]])
+      train_examples["trace"].extend([example["prompt"] + tokenizer.sep_token + example["references"][0] for example in text_data["examples"]])
   
-  val_examples = {"inputs": []}
-  val_targets = {"targets": []}
+  val_examples = {"trace": []}
+  val_targets = {"trace": []}
   for algorithm in FLAGS.algorithms:
-    data_path = f"{FLAGS.dataset_path}/val/{algorithm}.json"
+    data_path = f"./data/val/{algorithm}.json"
     with open(data_path, 'r') as f:
       text_data = json.load(f)
-      val_examples["inputs"].extend([example["prompt"] for example in text_data["examples"]])
-      val_targets["targets"].extend([example["references"][0] for example in text_data["examples"]])
+      val_examples["trace"].extend([example["prompt"] for example in text_data["examples"]])
+      val_targets["trace"].extend([example["references"][0] for example in text_data["examples"]])
   val_file = './training_data/val.json'
   val_target_file = './training_data/val_target.json'
 
@@ -137,7 +131,7 @@ def main(unused_argv):
     },
   )
 
-  with open("./configs/train_config.json", "r") as f:
+  with open("./configs/train.json", "r") as f:
     train_config = json.load(f)
 
   # init wandb 
@@ -156,9 +150,10 @@ def main(unused_argv):
 
   # tokenize dataset 
   def tokenize(examples):
-    text = [tokenizer.bos_token + examples["inputs"][i].strip() + tokenizer.sep_token + examples["targets"][i].strip() + tokenizer.eos_token
-            for i in range(len(examples["inputs"]))
-            ]
+    # text = [tokenizer.bos_token + examples["inputs"][i].strip() + tokenizer.sep_token + examples["targets"][i].strip() + tokenizer.eos_token
+            # for i in range(len(examples["inputs"]))
+            # ]
+    text = [tokenizer.bos_token + examples["trace"][i].strip() + tokenizer.eos_token for i in range(len(examples["trace"]))]
     return tokenizer(
         text,
         padding="max_length",
@@ -166,16 +161,16 @@ def main(unused_argv):
         # context length for Gemma 2b
         max_length=8192
     )
+  
   tokenized_dataset = hf_datasets.map(
     tokenize,
     batched=True,
-    remove_columns=hf_datasets["train"].column_names
+    remove_columns=hf_datasets.column_names
   )
   data_collator = DataCollatorForLanguageModeling(tokenizer, mlm=False)
   
   # train model 
   training_args = TrainingArguments(
-    output_dir="./outputs/gemma-2b",
     seed=FLAGS.seed,
     per_device_train_batch_size=train_config["per_device_train_batch_size"],
     per_device_eval_batch_size=train_config["per_device_eval_batch_size"],
@@ -185,12 +180,13 @@ def main(unused_argv):
     evaluation_strategy="steps",
     eval_steps=train_config["eval_steps"],
     save_steps=train_config["save_steps"],
-    save_total_limit=train_config["save_total_limit"],
+    # save_total_limit=train_config["save_total_limit"],
     load_best_model_at_end=train_config["load_best_model_at_end"],
+    output_dir=train_config["output_dir"],
     **train_config
   )
 
-  trainer = Trainer(
+  trainer = CustomTrainer(
     model=train_model,
     tokenizer=tokenizer,
     args=training_args,

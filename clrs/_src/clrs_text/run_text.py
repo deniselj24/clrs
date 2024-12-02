@@ -19,24 +19,15 @@ from datasets import load_dataset
 
 # flags.DEFINE_list('algorithms', ['bfs', 'activity_selector', 'articulation_points', 'bellman_ford', 'binary_search', 'bridges', 'bubble_sort', 'dag_shortest_paths', 'dfs', 'dijkstra', 'find_maximum_subarray_kadane', 'floyd_warshall', 'graham_scan', 'heapsort', 'insertion_sort', 'jarvis_march', 'kmp_matcher', 'lcs_length', 'matrix_chain_order', 'minimum', 'mst_kruskal', 'mst_prim', 'naive_string_matcher', 'optimal_bst', 'quickselect', 'quicksort', 'segments_intersect', 'strongly_connected_components', 'task_scheduling', 'topological_sort'], 'Which algorithms to run.')
 flags.DEFINE_list('algorithms', ['bfs'], 'Which algorithms to run.')
-flags.DEFINE_list('train_lengths', ['4', '7', '11', '13', '16'],
+"""flags.DEFINE_list('train_lengths', ['4', '7', '11', '13', '16'],
                   'Which training sizes to use. A size of -1 means '
                   'use the benchmark dataset.')
-flags.DEFINE_integer('length_needle', -8,
-                     'Length of needle for training and validation '
-                     '(not testing) in string matching algorithms. '
-                     'A negative value randomizes the length for each sample '
-                     'between 1 and the opposite of the value. '
-                     'A value of 0 means use always 1/4 of the length of '
-                     'the haystack (the default sampler behavior).')
-flags.DEFINE_integer('seed', 42, 'Random seed to set')
-
 flags.DEFINE_boolean('random_pos', True,
                      'Randomize the pos input common to all algos.')
 flags.DEFINE_boolean('enforce_permutations', True,
                      'Whether to enforce permutation-type node pointers.')
 flags.DEFINE_boolean('enforce_pred_as_input', True,
-                     'Whether to change pred_h hints into pred inputs.')
+                     'Whether to change pred_h hints into pred inputs.')"""
 flags.DEFINE_integer('batch_size', 32, 'Batch size used for training.')
 flags.DEFINE_integer('train_steps', 10000, 'Number of training iterations.')
 flags.DEFINE_integer('eval_every', 50, 'Evaluation frequency (in steps).')
@@ -47,7 +38,7 @@ flags.DEFINE_float('grad_clip_max_norm', 1.0,
                    'Gradient clipping by norm. 0.0 disables grad clipping')
 flags.DEFINE_float('dropout_prob', 0.0, 'Dropout rate to use.')
 
-flags.DEFINE_enum('hint_repred_mode', 'soft', ['soft', 'hard', 'hard_on_eval'],
+"""flags.DEFINE_enum('hint_repred_mode', 'soft', ['soft', 'hard', 'hard_on_eval'],
                   'How to process predicted hints when fed back as inputs.'
                   'In soft mode, we use softmaxes for categoricals, pointers '
                   'and mask_one, and sigmoids for masks. '
@@ -58,24 +49,16 @@ flags.DEFINE_enum('hint_repred_mode', 'soft', ['soft', 'hard', 'hard_on_eval'],
 flags.DEFINE_boolean('use_ln', True,
                      'Whether to use layer normalisation in the processor.')
 flags.DEFINE_integer('nb_triplet_fts', 8,
-                     'How many triplet features to compute?')
+                     'How many triplet features to compute?')"""
 
-flags.DEFINE_string('checkpoint_path', '/tmp/CLRS30',
-                    'Path in which checkpoints are saved.')
 flags.DEFINE_string('dataset_path', './data_with_trace',
-                    'Path in which training dataset is stored.')
-flags.DEFINE_boolean('freeze_processor', False,
-                     'Whether to freeze the processor of the model.')
+                    'Path in which training data is stored.')
 
 FLAGS = flags.FLAGS
 
-class CustomTrainer(Trainer):
-  def compute_loss(self, model, inputs, return_outputs=False):
-    if self.training:
-      # Standard loss during training
-      outputs = model(**inputs)
-      loss = outputs.loss
-    else:
+"""class CustomTrainer(Trainer):
+  def eval_loss(self, model, inputs, return_outputs=False):
+    if self.eval:
       # Custom loss based on string matching where the target is checked to be a substring of the generated text
       generated_ids = model.generate(
         inputs["input_ids"],
@@ -89,7 +72,7 @@ class CustomTrainer(Trainer):
       correct = sum(1 for gen, tgt in zip(generated_text, target_text) if tgt.strip() in gen.strip())
       loss = 1 - (correct / len(generated_text))
 
-    return (loss, outputs) if return_outputs else loss
+    return (loss, outputs) if return_outputs else loss"""
 
 
 def main(unused_argv):
@@ -186,7 +169,7 @@ def main(unused_argv):
     **train_config
   )
 
-  trainer = CustomTrainer(
+  trainer = Trainer(
     model=train_model,
     tokenizer=tokenizer,
     args=training_args,

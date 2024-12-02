@@ -100,9 +100,8 @@ class CustomTrainer(Trainer):
 
 
 def main(unused_argv):
-
   # create dataset -- traces were previously called hints in the original CLRS benchmark
-  # traces are in the target field of the json
+  # traces are in contained the target field of the json
   train_file = './training_data/train.json'
   train_examples = {"inputs": [], "targets": []}
   for algorithm in FLAGS.algorithms:
@@ -112,21 +111,23 @@ def main(unused_argv):
       train_examples["inputs"].extend([example["prompt"] for example in text_data["examples"]])
       train_examples["targets"].extend([example["references"][0] for example in text_data["examples"]])
   
-  val_examples = {"inputs": [], "targets": []}
+  val_examples = {"inputs": []}
+  val_targets = {"targets": []}
   for algorithm in FLAGS.algorithms:
     data_path = f"{FLAGS.dataset_path}/val/{algorithm}.json"
     with open(data_path, 'r') as f:
       text_data = json.load(f)
       val_examples["inputs"].extend([example["prompt"] for example in text_data["examples"]])
-      # TODO extract targets from file 
-      val_examples["targets"].extend([example["references"][0] for example in text_data["examples"]])
+      val_targets["targets"].extend([example["references"][0] for example in text_data["examples"]])
   val_file = './training_data/val.json'
+  val_target_file = './training_data/val_target.json'
 
-  with open(val_file, 'w') as f:
-    json.dump(val_examples, f)  
   with open(train_file, 'w') as f:
-    json.dump(train_examples, f)  
-
+      json.dump(train_examples, f)
+  with open(val_file, 'w') as f:
+    json.dump(val_examples, f)
+  with open(val_target_file, 'w') as f:
+      json.dump(val_targets, f)
   hf_datasets = load_dataset(
     "json",
     data_files={
@@ -165,8 +166,6 @@ def main(unused_argv):
         # context length for Gemma 2b
         max_length=8192
     )
-
-  # Apply tokenization
   tokenized_dataset = hf_datasets.map(
     tokenize,
     batched=True,

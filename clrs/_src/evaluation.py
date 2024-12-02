@@ -20,6 +20,7 @@ import chex
 from clrs._src import probing
 from clrs._src import specs
 import numpy as np
+import re
 
 
 _Array = chex.Array
@@ -137,6 +138,27 @@ def evaluate(
   # Return a single scalar score that is the mean of all output scores.
   evals['score'] = sum([v.item() for v in evals.values()]) / len(evals)
   return evals
+
+def evaluate_text(
+    outputs: Tuple[probing.DataPoint, ...],
+    predictions: Result,
+) -> Dict[str, float]:
+  """Evaluate output predictions."""
+  evals = {}
+  # outputs = _reduce_permutations_tuple(outputs)
+  # predictions = _reduce_permutations_dict(predictions)
+  for truth in outputs:
+    assert truth.name in predictions
+    pred = predictions[truth.name]
+    # evals[truth.name] = _evaluate(truth, pred)
+    # currently works for arrays with canonical ordering 
+    # including binary search, BFS, Dijkstra (graph traversal problems)
+    pred_contains_truth = bool(re.search(re.escape(truth), pred))
+    evals[truth.name] = float(pred_contains_truth)
+  # Return a single scalar score that is the mean of all output scores.
+  evals['score'] = sum([v.item() for v in evals.values()]) / len(evals)
+  return evals
+
 
 
 def _evaluate(truth, pred, idx=None, lengths=None):

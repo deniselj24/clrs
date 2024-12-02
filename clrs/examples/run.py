@@ -150,21 +150,22 @@ def _iterate_sampler(sampler, batch_size):
 
 
 def _maybe_download_dataset(dataset_path):
-  """Download CLRS30 dataset if needed."""
-  dataset_folder = os.path.join(dataset_path, clrs.get_clrs_folder())
+  """Fetch dataset locally."""
+  # dataset_folder = os.path.join(dataset_path, clrs.get_clrs_folder())
+  dataset_folder = dataset_path 
   if os.path.isdir(dataset_folder):
     logging.info('Dataset found at %s. Skipping download.', dataset_folder)
     return dataset_folder
   logging.info('Dataset not found in %s. Downloading...', dataset_folder)
-
-  clrs_url = clrs.get_dataset_gcp_url()
+  return 
+  """clrs_url = clrs.get_dataset_gcp_url()
   request = requests.get(clrs_url, allow_redirects=True)
   clrs_file = os.path.join(dataset_path, os.path.basename(clrs_url))
   os.makedirs(dataset_folder)
   open(clrs_file, 'wb').write(request.content)
   shutil.unpack_archive(clrs_file, extract_dir=dataset_folder)
   os.remove(clrs_file)
-  return dataset_folder
+  return dataset_folder"""
 
 
 def make_sampler(length: int,

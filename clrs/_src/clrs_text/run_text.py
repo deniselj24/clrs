@@ -12,7 +12,7 @@ from absl import logging
 import numpy as np
 import json 
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, TrainingArguments, Trainer, DataCollatorForLanguageModeling
-from evaluation import evaluate_text
+# from evaluation import evaluate_text
 import wandb
 from datasets import load_dataset
 
@@ -76,16 +76,22 @@ FLAGS = flags.FLAGS
 
 
 def main(unused_argv):
+  # Gemma 2B base model
+  model_config = AutoConfig.from_pretrained("./configs/gemma-2b.json")
+  train_model = AutoModelForCausalLM.from_config(model_config)
+  tokenizer = AutoTokenizer.from_pretrained("google/gemma-2b")
+
   # create dataset -- traces were previously called hints in the original CLRS benchmark
   # traces are in contained the target field of the json
   train_file = './training_data/train.json'
-  train_examples = {"prompt": [], "targets": [], "trace": []}
+  # train_examples = {"prompt": [], "targets": [], "trace": []}
+  train_examples = {"trace": []}
   for algorithm in FLAGS.algorithms:
-    data_path = f"{FLAGS.dataset_path}/train/{algorithm}.json"
+    data_path = f"./data/train/{algorithm}.json"
     with open(data_path, 'r') as f:
       text_data = json.load(f)
-      train_examples["prompt"].extend([example["prompt"] for example in text_data["examples"]])
-      train_examples["targets"].extend([example["references"][0] for example in text_data["examples"]])
+      # train_examples["prompt"].extend([example["prompt"] for example in text_data["examples"]])
+      # train_examples["targets"].extend([example["references"][0] for example in text_data["examples"]])
       train_examples["trace"].extend([example["prompt"] + tokenizer.sep_token + example["references"][0] for example in text_data["examples"]])
   
   val_examples = {"trace": []}
@@ -123,14 +129,6 @@ def main(unused_argv):
   display_name = "gemma-2-2b"
   wandb.init(entity=user, project=project, name=display_name)
 
-  # Gemma 2B base model
-  with open("./configs/gemma-2b.json", "r") as f:
-    model_config = json.load(f)
-  model_config = AutoConfig(**model_config)
-  # model_config = AutoConfig.from_pretrained("google/gemma-2b")
-  train_model = AutoModelForCausalLM.from_config(model_config)
-  tokenizer = AutoTokenizer.from_pretrained("google/gemma-2b")
-
   # tokenize dataset 
   def tokenize(examples):
     # text = [tokenizer.bos_token + examples["inputs"][i].strip() + tokenizer.sep_token + examples["targets"][i].strip() + tokenizer.eos_token
@@ -157,6 +155,7 @@ def main(unused_argv):
     seed=FLAGS.seed,
     per_device_train_batch_size=train_config["per_device_train_batch_size"],
     per_device_eval_batch_size=train_config["per_device_eval_batch_size"],
+    learning_rate=train_config["learning_rate"]
     num_train_epochs=train_config["num_train_epochs"],
     weight_decay=train_config["weight_decay"],
     logging_steps=train_config["logging_steps"],

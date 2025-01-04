@@ -155,7 +155,7 @@ def main(unused_argv):
     seed=FLAGS.seed,
     per_device_train_batch_size=train_config["per_device_train_batch_size"],
     per_device_eval_batch_size=train_config["per_device_eval_batch_size"],
-    learning_rate=train_config["learning_rate"]
+    learning_rate=train_config["learning_rate"], 
     num_train_epochs=train_config["num_train_epochs"],
     weight_decay=train_config["weight_decay"],
     logging_steps=train_config["logging_steps"],

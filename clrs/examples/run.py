@@ -31,6 +31,7 @@ import tensorflow as tf
 import wandb
 import matplotlib.pyplot as plt
 import pathlib
+import torch
 
 from pyhessian import hessian 
 from hessian_density_plot import get_esd_plot
@@ -622,9 +623,23 @@ def main(unused_argv):
             # Create loss function for this algorithm
             loss_fn = create_loss_fn(train_model, algo_idx)
             
-            # Compute Hessian using current model parameters and extracted data
-            hessian_comp = hessian(train_model.params, 
-                                 loss_fn,
+            # Convert model parameters to the format expected by PyHessian
+            class ModelWrapper(torch.nn.Module):
+                def __init__(self, params, loss_fn):
+                    super().__init__()
+                    self.params = torch.nn.Parameter(torch.from_numpy(params))
+                    self.loss_fn = loss_fn
+                    self.train(False)  # Start in eval mode
+                
+                def forward(self, data):
+                    return self.loss_fn(self.params, data)
+            
+            # Create wrapped model
+            wrapped_model = ModelWrapper(train_model.params, loss_fn)
+            wrapped_model.cuda()  # If using CUDA
+            
+            # Compute Hessian
+            hessian_comp = hessian(wrapped_model, 
                                  data=(features, outputs),
                                  cuda=True)
             

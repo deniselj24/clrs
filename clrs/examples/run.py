@@ -28,6 +28,12 @@ import jax
 import numpy as np
 import requests
 import tensorflow as tf
+import wandb
+import matplotlib.pyplot as plt
+import pathlib
+
+from pyhessian import hessian 
+from hessian_density_plot import get_esd_plot
 
 
 flags.DEFINE_list('algorithms', ['bfs'], 'Which algorithms to run.')
@@ -397,6 +403,28 @@ def create_samplers(
           spec_list)
 
 
+def get_wandb_name():
+    return f"{'-algorithms='.join(FLAGS.algorithms)}__processor={FLAGS.processor_type}__hidden={FLAGS.hidden_size}_nheads={FLAGS.nb_heads}heads"
+
+
+def create_loss_fn(model, algo_idx):
+    """Creates a loss function compatible with PyHessian."""
+    def loss_fn(params, data):
+        features, outputs = data
+        # Store original params
+        original_params = model.params
+        # Set new params temporarily
+        model.params = params
+        # Get predictions using existing model predict method
+        preds, _ = model.predict(None, features, algorithm_index=algo_idx)
+        # Compute loss using existing model loss_fn
+        loss = model.loss_fn(outputs, preds)
+        # Restore original params
+        model.params = original_params
+        return loss
+    return loss_fn
+
+
 def main(unused_argv):
   if FLAGS.hint_mode == 'encoded_decoded':
     encode_hints = True
@@ -469,6 +497,28 @@ def main(unused_argv):
   else:
     train_model = eval_model
 
+  # Initialize wandb
+  wandb.init(
+      project="clrs-algorithm=" + "".join(FLAGS.algorithms),  # replace with your project name
+      name=get_wandb_name(),
+      config={
+          "algorithms": FLAGS.algorithms,
+          "processor_type": FLAGS.processor_type,
+          "hidden_size": FLAGS.hidden_size,
+          "nb_heads": FLAGS.nb_heads,
+          "learning_rate": FLAGS.learning_rate,
+          "train_lengths": FLAGS.train_lengths,
+          "batch_size": FLAGS.batch_size,
+          "chunk_length": FLAGS.chunk_length,
+          "chunked_training": FLAGS.chunked_training,
+          "freeze_processor": FLAGS.freeze_processor,
+          "dropout_prob": FLAGS.dropout_prob,
+          "hint_teacher_forcing": FLAGS.hint_teacher_forcing,
+          "hint_repred_mode": FLAGS.hint_repred_mode,
+          "nb_msg_passing_steps": FLAGS.nb_msg_passing_steps,
+      }
+  )
+
   # Training loop.
   best_score = -1.0
   current_train_items = [0] * len(FLAGS.algorithms)
@@ -497,6 +547,7 @@ def main(unused_argv):
         train_model.init(all_features, FLAGS.seed + 1)
 
     # Training step.
+    cur_loss = None
     for algo_idx in range(len(train_samplers)):
       feedback = feedback_list[algo_idx]
       rng_key, new_rng_key = jax.random.split(rng_key)
@@ -540,6 +591,68 @@ def main(unused_argv):
                      FLAGS.algorithms[algo_idx], step, val_stats)
         val_scores[algo_idx] = val_stats['score']
 
+        # Log validation score
+        #wandb.log({
+        #    f"scores/val_score_{FLAGS.algorithms[algo_idx]}": val_stats['score'],
+        #    "step": step
+        #})
+        common_extras = {'examples_seen': current_train_items[algo_idx],
+                         'step': step,
+                         'algorithm': FLAGS.algorithms[algo_idx]}
+        # log Test score
+        # new_rng_key, rng_key = jax.random.split(rng_key)
+        test_stats = collect_and_eval(
+            test_samplers[algo_idx],
+            functools.partial(eval_model.predict, algorithm_index=algo_idx),
+            test_sample_counts[algo_idx],
+            new_rng_key,
+            extras=common_extras)
+        logging.info('(test) algo %s : %s', FLAGS.algorithms[algo_idx], test_stats)
+        wandb.log({
+            f"scores/test_score_{FLAGS.algorithms[algo_idx]}": test_stats['score'],
+            f"scores/val_score_{FLAGS.algorithms[algo_idx]}": val_stats['score'],
+            f"loss": cur_loss,
+        }, step=step)
+      
+        # Extract features and outputs from feedback
+        features = feedback_list[algo_idx].features
+        outputs = feedback_list[algo_idx].outputs
+        
+        try:
+            # Create loss function for this algorithm
+            loss_fn = create_loss_fn(train_model, algo_idx)
+            
+            # Compute Hessian using current model parameters and extracted data
+            hessian_comp = hessian(train_model.params, 
+                                 loss_fn,
+                                 data=(features, outputs),
+                                 cuda=True)
+            
+            # Compute trace and eigenvalue density
+            trace = hessian_comp.trace()
+            density_eigen, density_weight = hessian_comp.density()
+
+            wandb.log({
+                f"hessian/trace_{FLAGS.algorithms[algo_idx]}": trace,
+            }, step=step)
+            
+            # Create directory and all parent directories if they don't exist
+            save_dir = os.path.join(FLAGS.checkpoint_path, 'hessian_plots')
+            pathlib.Path(save_dir).mkdir(parents=True, exist_ok=True)
+            
+            # Create plot and save locally
+            fig = get_esd_plot(density_eigen, density_weight)
+            plot_path = os.path.join(save_dir, 
+                f'esd_plot_{FLAGS.algorithms[algo_idx]}_step_{step}.png')
+            plt.savefig(plot_path)
+            plt.close(fig)
+            
+            logging.info(f'Saved Hessian ESD plot to {plot_path}')
+
+        except Exception as e:
+            logging.warning(f"Failed to compute Hessian: {str(e)}")
+            continue
+
       next_eval += FLAGS.eval_every
 
       # If best total score, update best checkpoint.
@@ -577,7 +690,16 @@ def main(unused_argv):
         extras=common_extras)
     logging.info('(test) algo %s : %s', FLAGS.algorithms[algo_idx], test_stats)
 
+    # Log test score
+    #wandb.log({
+    #    f"test_score/{FLAGS.algorithms[algo_idx]}": test_stats['score'],
+    #    "final_step": step
+    #})
+
   logging.info('Done!')
+
+  # Close wandb
+  wandb.finish()
 
 
 if __name__ == '__main__':

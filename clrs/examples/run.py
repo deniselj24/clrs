@@ -35,6 +35,7 @@ import torch
 
 from pyhessian import hessian 
 from hessian_density_plot import get_esd_plot
+from clrs._src.losses import output_loss
 
 
 flags.DEFINE_list('algorithms', ['bfs'], 'Which algorithms to run.')
@@ -408,24 +409,6 @@ def get_wandb_name():
     return f"{'-algorithms='.join(FLAGS.algorithms)}__processor={FLAGS.processor_type}__hidden={FLAGS.hidden_size}_nheads={FLAGS.nb_heads}heads"
 
 
-def create_loss_fn(model, algo_idx):
-    """Creates a loss function compatible with PyHessian."""
-    def loss_fn(params, data):
-        features, outputs = data
-        # Store original params
-        original_params = model.params
-        # Set new params temporarily
-        model.params = params
-        # Get predictions using existing model predict method
-        preds, _ = model.predict(None, features, algorithm_index=algo_idx)
-        # Compute loss using existing model loss_fn
-        loss = model.loss_fn(outputs, preds)
-        # Restore original params
-        model.params = original_params
-        return loss
-    return loss_fn
-
-
 def main(unused_argv):
   if FLAGS.hint_mode == 'encoded_decoded':
     encode_hints = True
@@ -620,22 +603,25 @@ def main(unused_argv):
             features = feedback_list[algo_idx].features
             outputs = feedback_list[algo_idx].outputs
             
-            # Convert model parameters to the format expected by PyHessian
+            # Wrap model in the format expected by PyHessian
             class ModelWrapper(torch.nn.Module):
-                def __init__(self, base_model, algo_idx):
+                def __init__(self, base_model, algo_idx, feedback_list, rng_key):
                     super().__init__()
                     self.base_model = base_model
                     self.algo_idx = algo_idx
+                    self.nb_nodes = feedback_list[algo_idx].features.data.shape[1]
+                    self.rng_key = rng_key
                 
                 def forward(self, x):
-                    preds, _ = self.base_model.predict(None, x, algorithm_index=self.algo_idx)
+                    preds, _ = self.base_model.predict(self.rng_key, x, algorithm_index=self.algo_idx)
                     return preds
                 
-                def loss_fn(self, outputs, targets):
-                    return self.base_model.feedback(None, feedback_list[algo_idx], algo_idx, training=False)
+                def loss_fn(self, preds, targets):
+                    truth = self.feedback_list[self.algo_idx].outputs._replace(data=targets)
+                    return output_loss(truth, preds, self.nb_nodes)
                 
             # Create wrapped model and criterion
-            wrapped_model = ModelWrapper(train_model, algo_idx)
+            wrapped_model = ModelWrapper(train_model, algo_idx, feedback_list, rng_key)
             wrapped_model.cuda()  # If using CUDA
             
             # Turn model to eval mode

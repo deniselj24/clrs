@@ -483,7 +483,8 @@ def main(unused_argv):
 
   # Initialize wandb
   wandb.init(
-      project="clrs-algorithm=" + "".join(FLAGS.algorithms),  # replace with your project name
+      #project="clrs-algorithm=" + "".join(FLAGS.algorithms),  # replace with your project name
+      project="test-hessian-" + "".join(FLAGS.algorithms),
       name=get_wandb_name(),
       config={
           "algorithms": FLAGS.algorithms,

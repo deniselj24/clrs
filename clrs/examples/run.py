@@ -609,7 +609,7 @@ def main(unused_argv):
                     super().__init__()
                     self.base_model = base_model
                     self.algo_idx = algo_idx
-                    self.nb_nodes = feedback_list[algo_idx].features.data.shape[1]
+                    self.nb_nodes = feedback_list[algo_idx].features.inputs[0].data.shape[1]
                     self.rng_key = rng_key
                 
                 def forward(self, x):
@@ -620,16 +620,15 @@ def main(unused_argv):
                     truth = self.feedback_list[self.algo_idx].outputs._replace(data=targets)
                     return output_loss(truth, preds, self.nb_nodes)
                 
-            # Create wrapped model and criterion
+            # Create wrapped model and criterion for the PyHessian 
             wrapped_model = ModelWrapper(train_model, algo_idx, feedback_list, rng_key)
-            wrapped_model.cuda()  # If using CUDA
-            
-            # Turn model to eval mode
+            if torch.cuda.is_available():
+                wrapped_model.cuda()  
             wrapped_model.eval()
             
-            # Compute Hessian
+            # Compute Hessian 
             hessian_comp = hessian(wrapped_model, 
-                                  train_model.loss_fn,  # Use existing loss function
+                                  train_model.loss_fn,  # uses existing output_loss function from losses.py 
                                   data=(features, outputs),
                                   cuda=True)
             

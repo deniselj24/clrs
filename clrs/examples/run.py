@@ -615,40 +615,42 @@ def main(unused_argv):
             f"loss": cur_loss,
         }, step=step)
       
-        # Extract features and outputs from feedback
-        features = feedback_list[algo_idx].features
-        outputs = feedback_list[algo_idx].outputs
-        
         try:
-            # Create loss function for this algorithm
-            loss_fn = create_loss_fn(train_model, algo_idx)
+            # Extract features and outputs from feedback
+            features = feedback_list[algo_idx].features
+            outputs = feedback_list[algo_idx].outputs
             
             # Convert model parameters to the format expected by PyHessian
             class ModelWrapper(torch.nn.Module):
-                def __init__(self, params, loss_fn):
+                def __init__(self, base_model, algo_idx):
                     super().__init__()
-                    self.params = torch.nn.Parameter(torch.from_numpy(params))
-                    self.loss_fn = loss_fn
-                    self.train(False)  # Start in eval mode
+                    self.base_model = base_model
+                    self.algo_idx = algo_idx
                 
-                def forward(self, data):
-                    return self.loss_fn(self.params, data)
+                def forward(self, x):
+                    preds, _ = self.base_model.predict(None, x, algorithm_index=self.algo_idx)
+                    return preds
             
-            # Create wrapped model
-            wrapped_model = ModelWrapper(train_model.params, loss_fn)
+            # Create wrapped model and criterion
+            wrapped_model = ModelWrapper(train_model, algo_idx)
             wrapped_model.cuda()  # If using CUDA
+            
+            # Turn model to eval mode
+            wrapped_model.eval()
             
             # Compute Hessian
             hessian_comp = hessian(wrapped_model, 
-                                 data=(features, outputs),
-                                 cuda=True)
+                                  train_model.loss_fn,  # Use existing loss function
+                                  data=(features, outputs),
+                                  cuda=True)
             
-            # Compute trace and eigenvalue density
+            # Compute eigenvalues, trace and density
+            top_eigenvalues, _ = hessian_comp.eigenvalues()
             trace = hessian_comp.trace()
             density_eigen, density_weight = hessian_comp.density()
 
             wandb.log({
-                f"hessian/trace_{FLAGS.algorithms[algo_idx]}": trace,
+                f"hessian/mean_trace_{FLAGS.algorithms[algo_idx]}": np.mean(trace),
             }, step=step)
             
             # Create directory and all parent directories if they don't exist
@@ -666,6 +668,7 @@ def main(unused_argv):
 
         except Exception as e:
             logging.warning(f"Failed to compute Hessian: {str(e)}")
+            logging.warning("Error details:", exc_info=True)
             continue
 
       next_eval += FLAGS.eval_every

@@ -601,8 +601,10 @@ def main(unused_argv):
       
         try:
             # get features and outputs
-            features = feedback_list[algo_idx].features
-            outputs = feedback_list[algo_idx].outputs
+            features = [torch.from_numpy(input.data) for input in feedback_list[algo_idx].features]
+            outputs = [torch.from_numpy(output.data) for output in feedback_list[algo_idx].outputs]
+            features_tensor = torch.stack(features)
+            outputs_tensor = torch.stack(outputs)
             
             # wrap model in format expected by PyHessian
             class ModelWrapper(torch.nn.Module):
@@ -629,7 +631,7 @@ def main(unused_argv):
             # Compute Hessian 
             hessian_comp = hessian(wrapped_model, 
                                   wrapped_model.loss_fn,  # uses existing output_loss function from losses.py 
-                                  data=(features, outputs),
+                                  data=(features_tensor, outputs_tensor),
                                   cuda=True)
             
             # Compute eigenvalues, trace and density

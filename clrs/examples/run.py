@@ -631,11 +631,9 @@ def main(unused_argv):
                     preds, _ = self.base_model.predict(None, x, algorithm_index=self.algo_idx)
                     return preds
                 
-                def loss_fn(self, data):
-                    features, outputs = data
-                    preds = self.forward(features)
-                    loss = self.base_model.loss_fn(outputs, preds)
-                    
+                def loss_fn(self, outputs, targets):
+                    return self.base_model.feedback(None, feedback_list[algo_idx], algo_idx, training=False)
+                
             # Create wrapped model and criterion
             wrapped_model = ModelWrapper(train_model, algo_idx)
             wrapped_model.cuda()  # If using CUDA

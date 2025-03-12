@@ -600,11 +600,11 @@ def main(unused_argv):
         }, step=step)
       
         try:
-            # Extract features and outputs from feedback
+            # get features and outputs
             features = feedback_list[algo_idx].features
             outputs = feedback_list[algo_idx].outputs
             
-            # Wrap model in the format expected by PyHessian
+            # wrap model in format expected by PyHessian
             class ModelWrapper(torch.nn.Module):
                 def __init__(self, base_model, algo_idx, feedback_list, rng_key):
                     super().__init__()
@@ -620,8 +620,7 @@ def main(unused_argv):
                 def loss_fn(self, preds, targets):
                     truth = self.feedback_list[self.algo_idx].outputs._replace(data=targets)
                     return output_loss(truth, preds, self.nb_nodes)
-                
-            # Create wrapped model and criterion for the PyHessian 
+      
             wrapped_model = ModelWrapper(train_model, algo_idx, feedback_list, rng_key)
             if torch.cuda.is_available():
                 wrapped_model.cuda()  
@@ -629,7 +628,7 @@ def main(unused_argv):
             
             # Compute Hessian 
             hessian_comp = hessian(wrapped_model, 
-                                  train_model.loss_fn,  # uses existing output_loss function from losses.py 
+                                  wrapped_model.loss_fn,  # uses existing output_loss function from losses.py 
                                   data=(features, outputs),
                                   cuda=True)
             
@@ -642,11 +641,9 @@ def main(unused_argv):
                 f"hessian/mean_trace_{FLAGS.algorithms[algo_idx]}": np.mean(trace),
             }, step=step)
             
-            # Create directory and all parent directories if they don't exist
             save_dir = os.path.join(FLAGS.checkpoint_path, 'hessian_plots')
             pathlib.Path(save_dir).mkdir(parents=True, exist_ok=True)
-            
-            # Create plot and save locally
+            # Gen Hessian spectrum plot and save locally
             fig = get_esd_plot(density_eigen, density_weight)
             plot_path = os.path.join(save_dir, 
                 f'esd_plot_{FLAGS.algorithms[algo_idx]}_step_{step}.png')

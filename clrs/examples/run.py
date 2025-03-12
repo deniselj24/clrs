@@ -601,7 +601,7 @@ def main(unused_argv):
       
         try:
             # get features and outputs
-            features = [torch.from_numpy(input.data) for input in feedback_list[algo_idx].features]
+            features = [torch.from_numpy(input.data) for input in feedback_list[algo_idx].features.inputs]
             outputs = [torch.from_numpy(output.data) for output in feedback_list[algo_idx].outputs]
             features_tensor = torch.stack(features)
             outputs_tensor = torch.stack(outputs)

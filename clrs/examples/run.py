@@ -624,15 +624,14 @@ def main(unused_argv):
                     return output_loss(truth, preds, self.nb_nodes)
       
             wrapped_model = ModelWrapper(train_model, algo_idx, feedback_list, rng_key)
-            if torch.cuda.is_available():
-                wrapped_model.cuda()  
+            wrapped_model.cuda()  
             wrapped_model.eval()
             
             # Compute Hessian 
             hessian_comp = hessian(wrapped_model, 
                                   wrapped_model.loss_fn,  # uses existing output_loss function from losses.py 
                                   data=(features_tensor, outputs_tensor),
-                                  cuda=True)
+                                  cuda=True) # use GPU
             
             # Compute eigenvalues, trace and density
             top_eigenvalues, _ = hessian_comp.eigenvalues()

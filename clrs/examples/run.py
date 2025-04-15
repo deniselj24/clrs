@@ -602,10 +602,13 @@ def main(unused_argv):
         try:
             # get features and outputs
             features = [torch.from_numpy(input.data) for input in feedback_list[algo_idx].features.inputs]
+            print("features", features)
+            print("outputs", feedback_list[algo_idx].outputs)
             outputs = [torch.from_numpy(output.data) for output in feedback_list[algo_idx].outputs]
             features_tensor = torch.stack(features)
             outputs_tensor = torch.stack(outputs)
-            
+            print("features_tensor", features_tensor)
+            print("output_tensor", output_tensor)            
             # wrap model in format expected by PyHessian
             class ModelWrapper(torch.nn.Module):
                 def __init__(self, base_model, algo_idx, feedback_list, rng_key):

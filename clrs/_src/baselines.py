@@ -372,7 +372,7 @@ class BaselineModel(model.Model):
     return  loss, grads
 
   def _compute_second_order_loss(self, params, rng_key, feedback, algo_idx, d_tensor):
-    (loss, grads) = jax.value_and_grad(self._loss)(params, rng_key, feedback, algo_idx)
+    (loss, grads) = jax.value_and_grad(self._loss)(params, rng_key, feedback[0], algo_idx)
     g_list = jax.tree_util.tree_leaves(grads)
     g_tensor = jnp.concatenate([jnp.ravel(g) for g in g_list])
     return jnp.sum(g_tensor * d_tensor)

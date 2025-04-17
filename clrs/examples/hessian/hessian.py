@@ -150,6 +150,7 @@ class Hessian_Calculator:
         v_list.append(v.cpu())
 
         w_prime = self.hessian_vector_product_with_tensor_input(v_list[-1])
+        w_prime = torch.from_numpy(np.array(w_prime))
         "orthogonalize wprime"
         alpha = torch.sum(w_prime * v_list[-1])
         w = w_prime - alpha * v_list[-1]
@@ -179,6 +180,8 @@ class Hessian_Calculator:
             w_prime = self.hessian_vector_product_with_tensor_input(
                 v_list[-1]
             )
+            w_prime = torch.from_numpy(np.array(w_prime))
+            print("w_prime", w_prime)
             alpha = torch.sum(w_prime * v_list[-1])
             w = w_prime - alpha * v_list[-1] - beta * v_list[-2]
             T[j, j] = alpha
@@ -187,7 +190,7 @@ class Hessian_Calculator:
 
         return T
 
-    # TODO: remove dataloader 
+    # First pass 16/04/25 
     def hessian_vector_product_with_tensor_input(self, d_tensor):
         "compute hessian_vector product, takes a flattened tensors as input (with shape (total parameters, ) )"
         # if dataloader is None:
@@ -210,6 +213,8 @@ class Hessian_Calculator:
         #    return jnp.sum(g_tensor * d_tensor)
 
         # Get Hessian-vector product
+        #print("feedback", self.feedback)
+        #print("algo index", self.algorithm_index)
         hd = jax.grad(self.model._compute_second_order_loss)(self.params, self.rng_key, self.feedback, self.algorithm_index, d_tensor)
         # Flatten Hessian-vector product
         hd_list = jax.tree_util.tree_leaves(hd)

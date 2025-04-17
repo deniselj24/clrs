@@ -33,10 +33,15 @@ import matplotlib.pyplot as plt
 import pathlib
 import torch
 
-from pyhessian import hessian 
-from hessian_density_plot import get_esd_plot
-from clrs._src.losses import output_loss
+# Hessian
+from hessian import *
+from hessian.hessian import *
+from hessian.plot import hessian_plot
+from utils.logger import Logger
 
+# Pytorch's efficient attention doesn't allow Hessian computation by default
+import torch 
+from torch.nn.attention import SDPBackend, sdpa_kernel
 
 flags.DEFINE_list('algorithms', ['bfs'], 'Which algorithms to run.')
 flags.DEFINE_list('train_lengths', ['4', '7', '11', '13', '16'],
@@ -317,6 +322,7 @@ def create_samplers(
   """
 
   train_samplers = []
+  train_sample_counts = []
   val_samplers = []
   val_sample_counts = []
   test_samplers = []
@@ -369,7 +375,7 @@ def create_samplers(
                         chunked=FLAGS.chunked_training,
                         sampler_kwargs=sampler_kwargs,
                         **common_sampler_args)
-      train_sampler, _, spec = make_multi_sampler(**train_args)
+      train_sampler, train_samples, spec = make_multi_sampler(**train_args)
 
       mult = clrs.CLRS_30_ALGS_SETTINGS[algorithm]['num_samples_multiplier']
       val_args = dict(sizes=val_lengths or [np.amax(train_lengths)],
@@ -394,19 +400,20 @@ def create_samplers(
 
     spec_list.append(spec)
     train_samplers.append(train_sampler)
+    train_sample_counts.append(train_samples)
     val_samplers.append(val_sampler)
     val_sample_counts.append(val_samples)
     test_samplers.append(test_sampler)
     test_sample_counts.append(test_samples)
 
-  return (train_samplers,
+  return (train_samplers, train_sample_counts,
           val_samplers, val_sample_counts,
           test_samplers, test_sample_counts,
           spec_list)
 
 
 def get_wandb_name():
-    return f"{'-algorithms='.join(FLAGS.algorithms)}__processor={FLAGS.processor_type}__hidden={FLAGS.hidden_size}_nheads={FLAGS.nb_heads}heads"
+    return f"{'-algorithms='.join(FLAGS.algorithms)}__processor={FLAGS.processor_type}__hidden={FLAGS.hidden_size}_nheads={FLAGS.nb_heads}heads_lr={FLAGS.learning_rate}"
 
 
 def main(unused_argv):
@@ -430,6 +437,7 @@ def main(unused_argv):
   # Create samplers
   (
       train_samplers,
+      train_sample_counts,
       val_samplers,
       val_sample_counts,
       test_samplers,
@@ -484,7 +492,7 @@ def main(unused_argv):
   # Initialize wandb
   wandb.init(
       #project="clrs-algorithm=" + "".join(FLAGS.algorithms),  # replace with your project name
-      project="test-hessian-" + "".join(FLAGS.algorithms),
+      project="test-hessian-" + "".join(FLAGS.algorithms) + "train_lengths=" + "".join(FLAGS.train_lengths),
       name=get_wandb_name(),
       config={
           "algorithms": FLAGS.algorithms,
@@ -503,6 +511,10 @@ def main(unused_argv):
           "nb_msg_passing_steps": FLAGS.nb_msg_passing_steps,
       }
   )
+
+  log_dir = "./results/standard/results_logs"
+  label = f"{FLAGS.algorithms[0]}_hessian"
+  logger = Logger(label, log_dir)
 
   # Training loop.
   best_score = -1.0
@@ -530,7 +542,10 @@ def main(unused_argv):
         train_model.init(all_length_features[:-1], FLAGS.seed + 1)
       else:
         train_model.init(all_features, FLAGS.seed + 1)
-
+    # Debugging gradients
+    print("\nStep", step)
+    #print("Model params:", jax.device_get(train_model._device_params))
+    
     # Training step.
     cur_loss = None
     for algo_idx in range(len(train_samplers)):
@@ -559,6 +574,8 @@ def main(unused_argv):
     # Periodically evaluate model
     if step >= next_eval:
       eval_model.params = train_model.params
+      total_params = sum(x.size for x in jax.tree_util.tree_leaves(train_model.params))
+      print("total params", total_params)
       for algo_idx in range(len(train_samplers)):
         common_extras = {'examples_seen': current_train_items[algo_idx],
                          'step': step,
@@ -594,72 +611,33 @@ def main(unused_argv):
             extras=common_extras)
         logging.info('(test) algo %s : %s', FLAGS.algorithms[algo_idx], test_stats)
         wandb.log({
+            f"total_params": total_params,
             f"scores/test_score_{FLAGS.algorithms[algo_idx]}": test_stats['score'],
             f"scores/val_score_{FLAGS.algorithms[algo_idx]}": val_stats['score'],
             f"loss": cur_loss,
         }, step=step)
-      
-        try:
-            # get features and outputs
-            features = [torch.from_numpy(input.data) for input in feedback_list[algo_idx].features.inputs]
-            print("features", features)
-            print("outputs", feedback_list[algo_idx].outputs)
-            outputs = [torch.from_numpy(output.data) for output in feedback_list[algo_idx].outputs]
-            features_tensor = torch.stack(features)
-            outputs_tensor = torch.stack(outputs)
-            print("features_tensor", features_tensor)
-            print("output_tensor", output_tensor)            
-            # wrap model in format expected by PyHessian
-            class ModelWrapper(torch.nn.Module):
-                def __init__(self, base_model, algo_idx, feedback_list, rng_key):
-                    super().__init__()
-                    self.base_model = base_model
-                    self.algo_idx = algo_idx
-                    self.nb_nodes = feedback_list[algo_idx].features.inputs[0].data.shape[1]
-                    self.rng_key = rng_key
-                
-                def forward(self, x):
-                    preds, _ = self.base_model.predict(self.rng_key, x, algorithm_index=self.algo_idx)
-                    return preds
-                
-                def loss_fn(self, preds, targets):
-                    truth = self.feedback_list[self.algo_idx].outputs._replace(data=targets)
-                    return output_loss(truth, preds, self.nb_nodes)
-      
-            wrapped_model = ModelWrapper(train_model, algo_idx, feedback_list, rng_key)
-            wrapped_model.cuda()  
-            wrapped_model.eval()
-            
-            # Compute Hessian 
-            hessian_comp = hessian(wrapped_model, 
-                                  wrapped_model.loss_fn,  # uses existing output_loss function from losses.py 
-                                  data=(features_tensor, outputs_tensor),
-                                  cuda=True) # use GPU
-            
-            # Compute eigenvalues, trace and density
-            top_eigenvalues, _ = hessian_comp.eigenvalues()
-            trace = hessian_comp.trace()
-            density_eigen, density_weight = hessian_comp.density()
 
-            wandb.log({
-                f"hessian/mean_trace_{FLAGS.algorithms[algo_idx]}": np.mean(trace),
-            }, step=step)
-            
-            save_dir = os.path.join(FLAGS.checkpoint_path, 'hessian_plots')
-            pathlib.Path(save_dir).mkdir(parents=True, exist_ok=True)
-            # Gen Hessian spectrum plot and save locally
-            fig = get_esd_plot(density_eigen, density_weight)
-            plot_path = os.path.join(save_dir, 
-                f'esd_plot_{FLAGS.algorithms[algo_idx]}_step_{step}.png')
-            plt.savefig(plot_path)
-            plt.close(fig)
-            
-            logging.info(f'Saved Hessian ESD plot to {plot_path}')
-
-        except Exception as e:
-            logging.warning(f"Failed to compute Hessian: {str(e)}")
-            logging.warning("Error details:", exc_info=True)
-            continue
+      # compute Hessian stats every 100 steps 
+      if step % 100 == 0: 
+        loss_fn = eval_model.feedback
+        hessian_calculator = Hessian_Calculator(model=eval_model, 
+                                                loss_fn=loss_fn,
+                                                rng_key=rng_key, 
+                                                # calculate Hessian on training data 
+                                                feedback=feedback_list, 
+                                                algo_idx=algo_idx,
+                                                batch_size=FLAGS.batch_size,
+                                                train_num=train_sample_counts[algo_idx],
+                                                device='cuda') #GPU 
+        hessian_calculator.compare_bound(logger=logger, 
+                                         log_i=step, 
+                                         train_num=train_sample_counts[algo_idx],
+                                         valid_num=val_sample_counts[algo_idx],  
+                                         train_loss=cur_loss, 
+                                         n_iter=100, 
+                                         n_v=1)
+        #hessian_calculator.noisy_loss(logger=logger, log_i=i, train_loss=train_loss, val_loss=val_loss, train_num=task.train_num, valid_num=task.valid_num)
+        #hessian_calculator.compute_compression_bound(logger=logger, log_i=i, train_num=task.train_num, valid_num=task.valid_num, train_loss=train_loss)
 
       next_eval += FLAGS.eval_every
 

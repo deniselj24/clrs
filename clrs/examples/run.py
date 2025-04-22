@@ -526,6 +526,9 @@ def main(unused_argv):
   val_scores = [-99999.9] * len(FLAGS.algorithms)
   length_idx = 0
 
+  train_converge = -1
+  val_converge = -1
+  
   while step < FLAGS.train_steps:
     feedback_list = [next(t) for t in train_samplers]
 
@@ -617,27 +620,24 @@ def main(unused_argv):
             f"loss": cur_loss,
         }, step=step)
 
-      # compute Hessian stats every 100 steps 
-      if step % 100 == 0: 
-        loss_fn = eval_model.feedback
-        hessian_calculator = Hessian_Calculator(model=eval_model, 
-                                                loss_fn=loss_fn,
-                                                rng_key=rng_key, 
-                                                # calculate Hessian on training data 
-                                                feedback=feedback_list, 
-                                                algo_idx=algo_idx,
-                                                batch_size=FLAGS.batch_size,
-                                                train_num=train_sample_counts[algo_idx],
-                                                device='cuda') #GPU 
-        hessian_calculator.compare_bound(logger=logger, 
-                                         log_i=step, 
-                                         train_num=train_sample_counts[algo_idx],
-                                         valid_num=val_sample_counts[algo_idx],  
-                                         train_loss=cur_loss, 
-                                         n_iter=100, 
-                                         n_v=1)
-        #hessian_calculator.noisy_loss(logger=logger, log_i=i, train_loss=train_loss, val_loss=val_loss, train_num=task.train_num, valid_num=task.valid_num)
-        #hessian_calculator.compute_compression_bound(logger=logger, log_i=i, train_num=task.train_num, valid_num=task.valid_num, train_loss=train_loss)
+      # log for Hessian 
+      train_converge_threshold = 0.99
+      test_converge_threshold = 0.99
+      train_did_converge = (
+        1
+        if val_stats['score'] > train_converge_threshold
+        else -1
+      )
+      val_did_converge = (
+        1
+        if test_stats['score'] > test_converge_threshold
+        else -1
+      )
+      train_converge = train_did_converge if train_converge < 0 else train_converge
+      val_converge = val_did_converge if val_converge < 0 else val_converge
+      logger.log("train_converge", train_did_converge, step)
+      logger.log("val_converge", val_did_converge, step)
+      logger.log("loss_gap", test_stats['score'] - val_stats['score'], step)
 
       next_eval += FLAGS.eval_every
 
@@ -655,6 +655,28 @@ def main(unused_argv):
         train_model.save_model('best.pkl')
       else:
         logging.info('Not saving new best model, %s', msg)
+
+    # compute Hessian stats every 100 steps 
+    if step % 100 == 0: 
+      loss_fn = eval_model.feedback
+      hessian_calculator = Hessian_Calculator(model=eval_model, 
+                                              loss_fn=loss_fn,
+                                              rng_key=rng_key, 
+                                              # calculate Hessian on training data 
+                                              feedback=feedback_list, 
+                                              algo_idx=algo_idx,
+                                              batch_size=FLAGS.batch_size,
+                                              train_num=train_sample_counts[algo_idx],
+                                              device='cuda') #GPU 
+      hessian_calculator.compare_bound(logger=logger, 
+                                        log_i=step, 
+                                        train_num=train_sample_counts[algo_idx],
+                                        valid_num=val_sample_counts[algo_idx],  
+                                        train_loss=cur_loss, 
+                                        n_iter=100, 
+                                        n_v=1)
+        #hessian_calculator.noisy_loss(logger=logger, log_i=i, train_loss=train_loss, val_loss=val_loss, train_num=task.train_num, valid_num=task.valid_num)
+        #hessian_calculator.compute_compression_bound(logger=logger, log_i=i, train_num=task.train_num, valid_num=task.valid_num, train_loss=train_loss)
 
     step += 1
     length_idx = (length_idx + 1) % len(train_lengths)

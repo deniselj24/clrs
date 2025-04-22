@@ -181,7 +181,7 @@ class Hessian_Calculator:
                 v_list[-1]
             )
             w_prime = torch.from_numpy(np.array(w_prime))
-            print("w_prime", w_prime)
+            #print("w_prime", w_prime)
             alpha = torch.sum(w_prime * v_list[-1])
             w = w_prime - alpha * v_list[-1] - beta * v_list[-2]
             T[j, j] = alpha
@@ -849,7 +849,7 @@ class Hessian_Calculator:
             )
 
         # model norm, use in the Hessian bound
-        r = compute_model_norm(self.model)
+        r = torch.from_numpy(np.array(compute_model_norm(self.model)))
 
         train_values_tensor = torch.tensor(train_values_full, dtype=torch.float32)
         train_weights_tensor = torch.tensor(train_weights_full, dtype=torch.float32)
@@ -886,7 +886,9 @@ class Hessian_Calculator:
         )
 
         # Compute the trace bound and spectral bound
-        d = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        #d = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        d = sum(x.size for x in jax.tree_util.tree_leaves(self.model.params))
+        
         C = np.sqrt(5)
 
         # trace and bound, computed on validation data
@@ -905,7 +907,8 @@ class Hessian_Calculator:
         logger.log("valid_weighted_entropy", valid_weighted_entropy.item(), log_i)
         logger.log("trace_bound", trace_bound.item(), log_i)
         logger.log("spectral_bound", spectral_bound.item(), log_i)
-
+        
+        print("logger", logger.data)
         # plot results in logger
         plot_curves(
             log=logger,
@@ -939,14 +942,18 @@ class Hessian_Calculator:
 
 
 def compute_model_norm(model, p=2):
-    norm = torch.norm(
-        torch.stack(
-            [torch.norm(p.detach(), 2) for p in model.parameters() if p.requires_grad]
-        ),
-        2,
-    )
-    return norm
-
+    # TODO 
+    #norm = torch.norm(
+    #    torch.stack(
+    #        [torch.norm(p.detach(), 2) for p in model.parameters() if p.requires_grad]
+    #    ),
+    #    2,
+    #)
+    params = jax.tree_util.tree_leaves(model.params)
+    print(params)
+    param_norms = [jnp.linalg.norm(p, ord=2) for p in params]
+    norm = jnp.linalg.norm(jnp.array(param_norms), ord=2)
+    return norm 
 
 def load_batch_func(batch, device="cpu"):
     batch = batch[0].to(device)

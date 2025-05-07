@@ -218,11 +218,19 @@ class BaselineModel(model.Model):
     self._freeze_processor = freeze_processor
     if grad_clip_max_norm != 0.0:
       optax_chain = [optax.clip_by_global_norm(grad_clip_max_norm),
-                     optax.scale_by_adam(),
-                     optax.scale(-learning_rate)]
+      # ADAM
+      #               optax.scale_by_adam(),
+      #               optax.scale(-learning_rate)]
+      #ADAMW               optax.adamw(learning_rate=learning_rate, weight_decay=1e-4)]
+                    optax.add_decayed_weights(weight_decay=1),
+                    optax.sgd(learning_rate=learning_rate)]
       self.opt = optax.chain(*optax_chain)
     else:
-      self.opt = optax.adam(learning_rate)
+      optax_chain = [optax.add_decayed_weights(weight_decay=1),
+                     optax.sgd(learning_rate=learning_rate)]
+      self.opt = optax.chain(*optax_chain)
+      #self.opt = optax.adamw(learning_rate=learning_rate, weight_decay=1e-4)
+      #self.opt = optax.adam(learning_rate)
 
     self.nb_msg_passing_steps = nb_msg_passing_steps
     self.debug = debug
@@ -448,7 +456,7 @@ class BaselineModel(model.Model):
 
   def _update_params(self, params, grads, opt_state, algorithm_index):
     updates, opt_state = filter_null_grads(
-        grads, self.opt, opt_state, self.opt_state_skeleton, algorithm_index)
+        grads, self.opt, opt_state, self.opt_state_skeleton, algorithm_index, params)
     if self._freeze_processor:
       params_subset = _filter_out_processor(params)
       updates_subset = _filter_out_processor(updates)
@@ -729,7 +737,7 @@ def accum_opt_update(params, grads, opt_state, opt, freeze_processor):
   # Average the gradients over all algos
   grads = jax.tree_util.tree_map(
       lambda *x: sum(x) / (sum([jnp.any(k) for k in x]) + 1e-12), *grads)
-  updates, opt_state = opt.update(grads, opt_state)
+  updates, opt_state = opt.update(grads, opt_state, params) # if using Adam, params not needed
   if freeze_processor:
     params_subset = _filter_out_processor(params)
     assert len(params) > len(params_subset)
@@ -744,11 +752,11 @@ def accum_opt_update(params, grads, opt_state, opt, freeze_processor):
 
 
 @functools.partial(jax.jit, static_argnames=['opt'])
-def opt_update(opt, flat_grads, flat_opt_state):
-  return opt.update(flat_grads, flat_opt_state)
+def opt_update(opt, flat_grads, flat_opt_state, flat_params):
+  return opt.update(flat_grads, flat_opt_state, flat_params)
 
 
-def filter_null_grads(grads, opt, opt_state, opt_state_skeleton, algo_idx):
+def filter_null_grads(grads, opt, opt_state, opt_state_skeleton, algo_idx, params):
   """Compute updates ignoring params that have no gradients.
 
   This prevents untrained params (e.g., encoders/decoders for algorithms
@@ -797,9 +805,10 @@ def filter_null_grads(grads, opt, opt_state, opt_state_skeleton, algo_idx):
       opt_state_skeleton,
       opt_state,
   )
+  flat_params, _ = jax.tree_util.tree_flatten(params, is_leaf=lambda x: x is None)
 
   # Compute updates only for the params with gradient.
-  flat_updates, flat_opt_state = opt_update(opt, flat_grads, flat_opt_state)
+  flat_updates, flat_opt_state = opt_update(opt, flat_grads, flat_opt_state, flat_params)
 
   def unflatten(flat, original):
     """Restore tree structure, filling missing (None) leaves with original."""

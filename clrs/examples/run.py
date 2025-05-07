@@ -413,7 +413,7 @@ def create_samplers(
 
 
 def get_wandb_name():
-    return f"{'-algorithms='.join(FLAGS.algorithms)}__processor={FLAGS.processor_type}__hidden={FLAGS.hidden_size}_nheads={FLAGS.nb_heads}heads_lr={FLAGS.learning_rate}"
+    return f"WD_lambda=1_{'-algorithms='.join(FLAGS.algorithms)}__processor={FLAGS.processor_type}__hidden={FLAGS.hidden_size}_nheads={FLAGS.nb_heads}heads_lr={FLAGS.learning_rate}"
 
 
 def main(unused_argv):
@@ -451,7 +451,9 @@ def main(unused_argv):
       test_lengths=[-1],
       train_batch_size=FLAGS.batch_size,
   )
-
+  print("train_sample_counts", train_sample_counts)
+  print("val_sample_counts", val_sample_counts)
+  print("test_sample_counts", test_sample_counts)
   processor_factory = clrs.get_processor_factory(
       FLAGS.processor_type,
       use_ln=FLAGS.use_ln,
@@ -512,7 +514,7 @@ def main(unused_argv):
       }
   )
 
-  log_dir = "./results/standard/results_logs"
+  log_dir = "./results/standard/results_logs_may6"
   label = f"{FLAGS.algorithms[0]}_hessian"
   logger = Logger(label, log_dir)
 
@@ -637,7 +639,7 @@ def main(unused_argv):
       val_converge = val_did_converge if val_converge < 0 else val_converge
       logger.log("train_converge", train_did_converge, step)
       logger.log("val_converge", val_did_converge, step)
-      logger.log("loss_gap", test_stats['score'] - val_stats['score'], step)
+      logger.log("loss_gap", val_stats['score'] - test_stats['score'], step)
 
       next_eval += FLAGS.eval_every
 
@@ -657,8 +659,11 @@ def main(unused_argv):
         logging.info('Not saving new best model, %s', msg)
 
     # compute Hessian stats every 100 steps 
-    if step % 100 == 0: 
+    if step % 100000 == 0 and step > 0: 
       loss_fn = eval_model.feedback
+      train_num = train_sample_counts[algo_idx]
+      train_num = train_num if train_num > 0 else -train_num
+      print("train_num", train_num)
       hessian_calculator = Hessian_Calculator(model=eval_model, 
                                               loss_fn=loss_fn,
                                               rng_key=rng_key, 
